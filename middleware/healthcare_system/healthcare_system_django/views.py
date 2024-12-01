@@ -6,6 +6,7 @@ import json
 from django.db import transaction
 from django.db.utils import IntegrityError
 from django.views.decorators.csrf import csrf_exempt
+from datetime import date
 
 
 # Create your views here.
@@ -213,29 +214,39 @@ def get_doctor_availability(request):
 
             # Validate input parameters
             if not (doctor_name and department_name and hospital_name):
-                return JsonResponse({'status': 'failed', 'message': 'All parameters (doctor_name, department_name, hospital_name) are required'}, status=400)
+                return JsonResponse({
+                    'status': 'failed',
+                    'message': 'All parameters (doctor_name, department_name, hospital_name) are required'
+                }, status=400)
 
-            # Fetch the doctor based on the provided details
+            # Fetch the doctor based on provided details
             doctor = Doctors.objects.filter(
                 doctor_name=doctor_name,
-                department_name=department_name,
-                hospital_name=hospital_name
+                department__department_name=department_name,
+                hospital__name=hospital_name
             ).first()
 
             if not doctor:
                 return JsonResponse({'status': 'failed', 'message': 'Doctor not found'}, status=404)
 
-            # Fetch the availability of the doctor
-            availability = DoctorAvailability.objects.filter(doctor=doctor, is_booked=False)
+            # Fetch the availability for the doctor starting from the current date
+            availability = DoctorAvailability.objects.filter(
+                doctor=doctor,
+                available_date__gte=date.today(),
+                is_booked=False
+            ).order_by('available_date', 'available_time')
 
             if not availability.exists():
-                return JsonResponse({'status': 'failed', 'message': 'No available time slots found for this doctor'}, status=404)
+                return JsonResponse({
+                    'status': 'failed',
+                    'message': 'No available time slots found for this doctor'
+                }, status=404)
 
             # Prepare response data
             available_slots = [
                 {
-                    'available_date': slot.available_date,
-                    'available_time': slot.available_time
+                    'available_date': slot.available_date.strftime('%Y-%m-%d'),
+                    'available_time': slot.available_time.strftime('%H:%M:%S')
                 }
                 for slot in availability
             ]
@@ -243,8 +254,8 @@ def get_doctor_availability(request):
             return JsonResponse({
                 'status': 'success',
                 'doctor_name': doctor.doctor_name,
-                'department_name': doctor.department_name,
-                'hospital_name': doctor.hospital_name,
+                'department_name': doctor.department.department_name,
+                'hospital_name': doctor.hospital.name,
                 'available_slots': available_slots
             }, status=200)
 
