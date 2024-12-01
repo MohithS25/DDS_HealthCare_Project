@@ -7,6 +7,9 @@ from django.db import transaction
 from django.db.utils import IntegrityError
 from django.views.decorators.csrf import csrf_exempt
 from datetime import date
+from django.db import connection
+from django.db import transaction
+
 
 
 # Create your views here.
@@ -147,61 +150,6 @@ def get_hospital_details(request):
     return JsonResponse({'status': 'failed', 'message': 'Invalid request method'}, status=405)
 
 
-@csrf_exempt  # Disable CSRF for testing
-def book_appointment(request):
-    if request.method == 'POST':
-        try:
-            # Parse parameters from the request body
-            data = json.loads(request.body)
-            doctor_id = data.get('doctor_id')
-            date = data.get('date')
-            time = data.get('time')
-
-            if not (doctor_id and date and time):
-                return JsonResponse({"status": "failed", "message": "Missing parameters"}, status=400)
-
-            with transaction.atomic(using='default', savepoint=True):
-                # Set the isolation level to SERIALIZABLE
-                transaction.set_autocommit(False)
-                transaction.set_isolation_level('serializable')
-
-                # Check if the slot is already booked
-                slot = DoctorAvailability.objects.select_for_update().get(
-                    doctor_id=doctor_id,
-                    available_date=date,
-                    available_time=time
-                )
-
-                if slot.is_booked:
-                    return JsonResponse({"status": "failed", "message": "Slot already booked"}, status=400)
-
-                # Mark the slot as booked
-                slot.is_booked = True
-                slot.save()
-
-                return JsonResponse({
-                    "status": "success",
-                    "message": "Appointment booked successfully",
-                    "doctor_id": doctor_id,
-                    "date": date,
-                    "time": time
-                }, status=201)
-
-        except DoctorAvailability.DoesNotExist:
-            return JsonResponse({"status": "failed", "message": "Slot does not exist"}, status=404)
-
-        except IntegrityError:
-            return JsonResponse({"status": "failed", "message": "Concurrency error. Please try again."}, status=409)
-
-        except Exception as e:
-            return JsonResponse({"status": "failed", "message": str(e)}, status=500)
-
-        finally:
-            transaction.set_autocommit(True)
-
-    return JsonResponse({"status": "failed", "message": "Invalid request method"}, status=405)
-
-
 @csrf_exempt  # Disable CSRF for testing purposes (optional in production)
 def get_doctor_availability(request):
     if request.method == 'POST':
@@ -253,6 +201,7 @@ def get_doctor_availability(request):
 
             return JsonResponse({
                 'status': 'success',
+                'doctor_id': doctor.doctor_id,
                 'doctor_name': doctor.doctor_name,
                 'department_name': doctor.department.department_name,
                 'hospital_name': doctor.hospital.name,
@@ -265,3 +214,56 @@ def get_doctor_availability(request):
             return JsonResponse({'status': 'failed', 'message': str(e)}, status=500)
 
     return JsonResponse({'status': 'failed', 'message': 'Invalid request method'}, status=405)
+
+@csrf_exempt  # Disable CSRF for testing
+def book_appointment(request):
+    if request.method == 'POST':
+        try:
+            # Parse parameters from the request body
+            data = json.loads(request.body)
+            doctor_id = data.get('doctor_id')
+            date = data.get('date')
+            time = data.get('time')
+
+            if not (doctor_id and date and time):
+                return JsonResponse({"status": "failed", "message": "Missing parameters"}, status=400)
+
+            # Use a raw transaction with SERIALIZABLE isolation
+            with transaction.atomic():
+                # Force SERIALIZABLE isolation level (PostgreSQL-specific)
+                with connection.cursor() as cursor:
+                    cursor.execute("SET TRANSACTION ISOLATION LEVEL SERIALIZABLE;")
+
+                # Lock the row for update
+                slot = DoctorAvailability.objects.select_for_update().get(
+                    doctor_id=doctor_id,
+                    available_date=date,
+                    available_time=time
+                )
+
+                if slot.is_booked:
+                    return JsonResponse({"status": "failed", "message": "Slot already booked"}, status=400)
+
+                # Mark the slot as booked
+                slot.is_booked = True
+                slot.save()
+
+                return JsonResponse({
+                    "status": "success",
+                    "message": "Appointment booked successfully",
+                    "doctor_id": doctor_id,
+                    "date": date,
+                    "time": time
+                }, status=201)
+
+        except DoctorAvailability.DoesNotExist:
+            return JsonResponse({"status": "failed", "message": "Slot does not exist"}, status=404)
+
+        except IntegrityError:
+            return JsonResponse({"status": "failed", "message": "Concurrency error. Please try again."}, status=409)
+
+        except Exception as e:
+            return JsonResponse({"status": "failed", "message": str(e)}, status=500)
+
+    return JsonResponse({"status": "failed", "message": "Invalid request method"}, status=405)
+
