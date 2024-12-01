@@ -16,13 +16,10 @@ Including another URLconf
 """
 from django.contrib import admin
 from django.urls import path
-from healthcare_system_django.views import signup, login, get_hospital_details, get_doctor_availability, book_appointment
+from healthcare_system_django.views import signup, login
 
 urlpatterns = [
     path('admin/', admin.site.urls),
     path('signup/', signup),
     path('login/', login),
-    path('gethospitalsdetails/', get_hospital_details),
-    path('get-doctor-availability/', get_doctor_availability),
-    path('book_appointment/', book_appointment)
 ]
