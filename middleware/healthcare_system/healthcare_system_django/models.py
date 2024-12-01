@@ -43,18 +43,16 @@ class Departments(models.Model):
 
 
 class DoctorAvailability(models.Model):
-    doctor = models.ForeignKey('Doctors', on_delete=models.CASCADE)
+    doctor = models.ForeignKey('Doctors', models.DO_NOTHING)
     available_date = models.DateField()
     available_time = models.TimeField()
-    is_booked = models.BooleanField(default=False)
+    is_booked = models.BooleanField(blank=True, null=True)
 
     class Meta:
-        constraints = [
-            models.UniqueConstraint(
-                fields=['doctor', 'available_date', 'available_time'],
-                name='unique_doctor_slot'
-            )
-        ]
+        managed = False
+        db_table = 'doctor_availability'
+        unique_together = (('doctor', 'available_date', 'available_time'),)
+
 
 class Doctors(models.Model):
     doctor_id = models.AutoField(primary_key=True)
