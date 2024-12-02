@@ -38,9 +38,11 @@ INSTALLED_APPS = [
     'django.contrib.sessions',
     'django.contrib.messages',
     'django.contrib.staticfiles',
+    'corsheaders',
 ]
 
 MIDDLEWARE = [
+    'corsheaders.middleware.CorsMiddleware',
     'django.middleware.security.SecurityMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
@@ -49,6 +51,12 @@ MIDDLEWARE = [
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
 ]
+
+CORS_ALLOWED_ORIGINS = [
+    "http://localhost:3000",  # Next.js frontend URL
+]
+
+CORS_ALLOW_ALL_ORIGINS = False
 
 ROOT_URLCONF = 'healthcare_system.urls'
 
@@ -77,9 +85,9 @@ WSGI_APPLICATION = 'healthcare_system.wsgi.application'
 DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.postgresql',  # PostgreSQL backend
-        'NAME': "DDS_PROJECT",                     # Database name
+        'NAME': "DDS_Project",                     # Database name
         'USER': 'postgres',                        # Username (Owner)
-        'PASSWORD': 'Subhash@04',               # PostgreSQL password
+        'PASSWORD': 'postgres',               # PostgreSQL password
         'HOST': 'localhost',                       # Host (localhost for pgAdmin)
         'PORT': '5433',                            # Default PostgreSQL port
     }
