@@ -9,6 +9,7 @@ from django.views.decorators.csrf import csrf_exempt
 from datetime import date
 from django.db import connection
 from django.db import transaction
+from .helpers.doctor_availability import get_doctor_availability
 
 
 
@@ -119,16 +120,26 @@ def get_hospital_details(request):
                 department_data = []
                 for department in departments:
                     doctors = Doctors.objects.filter(department=department)
+                    department_doctors = []
+
+                    for doctor in doctors:
+                        # Call the helper function to get doctor availability
+                        doctor_availability = get_doctor_availability(
+                            doctor.doctor_name,
+                            department.department_name,
+                            hospital.name
+                        )
+
+                        department_doctors.append({
+                            'doctor_id': doctor.doctor_id,
+                            'doctor_name': doctor.doctor_name,
+                            'available_slots': doctor_availability.get('available_slots', [])
+                        })
+
                     department_data.append({
                         'department_id': department.department_id,
                         'department_name': department.department_name,
-                        'doctors': [
-                            {
-                                'doctor_id': doctor.doctor_id,
-                                'doctor_name': doctor.doctor_name,
-                            }
-                            for doctor in doctors
-                        ]
+                        'doctors': department_doctors
                     })
 
                 # Add hospital and its associated data to the response
@@ -150,120 +161,69 @@ def get_hospital_details(request):
     return JsonResponse({'status': 'failed', 'message': 'Invalid request method'}, status=405)
 
 
-@csrf_exempt  # Disable CSRF for testing purposes (optional in production)
-def get_doctor_availability(request):
-    if request.method == 'POST':
-        try:
-            # Parse the JSON body
-            body = json.loads(request.body)
-            doctor_name = body.get('doctor_name')
-            department_name = body.get('department_name')
-            hospital_name = body.get('hospital_name')
-
-            # Validate input parameters
-            if not (doctor_name and department_name and hospital_name):
-                return JsonResponse({
-                    'status': 'failed',
-                    'message': 'All parameters (doctor_name, department_name, hospital_name) are required'
-                }, status=400)
-
-            # Fetch the doctor based on provided details
-            doctor = Doctors.objects.filter(
-                doctor_name=doctor_name,
-                department__department_name=department_name,
-                hospital__name=hospital_name
-            ).first()
-
-            if not doctor:
-                return JsonResponse({'status': 'failed', 'message': 'Doctor not found'}, status=200)
-
-            # Fetch the availability for the doctor starting from the current date
-            availability = DoctorAvailability.objects.filter(
-                doctor=doctor,
-                available_date__gte=date.today(),
-                is_booked=False
-            ).order_by('available_date', 'available_time')
-
-            if not availability.exists():
-                return JsonResponse({
-                    'status': 'failed',
-                    'message': 'No available time slots found for this doctor'
-                }, status=200)
-
-            # Prepare response data
-            available_slots = [
-                {
-                    'available_date': slot.available_date.strftime('%Y-%m-%d'),
-                    'available_time': slot.available_time.strftime('%H:%M:%S')
-                }
-                for slot in availability
-            ]
-
-            return JsonResponse({
-                'status': 'success',
-                'doctor_id': doctor.doctor_id,
-                'doctor_name': doctor.doctor_name,
-                'department_name': doctor.department.department_name,
-                'hospital_name': doctor.hospital.name,
-                'available_slots': available_slots
-            }, status=200)
-
-        except json.JSONDecodeError:
-            return JsonResponse({'status': 'failed', 'message': 'Invalid JSON format'}, status=400)
-        except Exception as e:
-            return JsonResponse({'status': 'failed', 'message': str(e)}, status=500)
-
-    return JsonResponse({'status': 'failed', 'message': 'Invalid request method'}, status=405)
-
 @csrf_exempt  # Disable CSRF for testing
 def book_appointment(request):
     if request.method == 'POST':
         try:
-            # Parse parameters from the request body
-            data = json.loads(request.body)
-            doctor_id = data.get('doctor_id')
-            date = data.get('date')
-            time = data.get('time')
+            # Parse the array of appointment data from the request body
+            data = json.loads(request.body)  # This is now a list of appointment objects
 
-            if not (doctor_id and date and time):
-                return JsonResponse({"status": "failed", "message": "Missing parameters"}, status=400)
+            if not isinstance(data, list):  # Check if the data is a list
+                return JsonResponse({"status": "failed", "message": "Invalid data format. Expected an array."}, status=400)
 
-            # Use a raw transaction with SERIALIZABLE isolation
-            with transaction.atomic():
-                # Force SERIALIZABLE isolation level (PostgreSQL-specific)
-                with connection.cursor() as cursor:
-                    cursor.execute("SET TRANSACTION ISOLATION LEVEL SERIALIZABLE;")
+            # List to collect errors (if any) for each appointment slot
+            errors = []
 
-                # Lock the row for update
-                slot = DoctorAvailability.objects.select_for_update().get(
-                    doctor_id=doctor_id,
-                    available_date=date,
-                    available_time=time
-                )
+            # Iterate through each appointment slot
+            for appointment in data:
+                doctor_id = appointment.get('doctor_id')
+                date = appointment.get('date')
+                time = appointment.get('time')
 
-                if slot.is_booked:
-                    return JsonResponse({"status": "failed", "message": "Slot already booked"}, status=400)
+                if not (doctor_id and date and time):
+                    errors.append(f"Missing parameters for doctor {doctor_id} on {date} at {time}")
+                    continue  # Skip this slot and move to the next one
 
-                # Mark the slot as booked
-                slot.is_booked = True
-                slot.save()
+                # Handle the slot booking logic
+                try:
+                    with transaction.atomic():
+                        with connection.cursor() as cursor:
+                            cursor.execute("SET TRANSACTION ISOLATION LEVEL SERIALIZABLE;")
 
-                return JsonResponse({
-                    "status": "success",
-                    "message": "Appointment booked successfully",
-                    "doctor_id": doctor_id,
-                    "date": date,
-                    "time": time
-                }, status=201)
+                        # Lock the row for update
+                        slot = DoctorAvailability.objects.select_for_update().get(
+                            doctor_id=doctor_id,
+                            available_date=date,
+                            available_time=time
+                        )
 
-        except DoctorAvailability.DoesNotExist:
-            return JsonResponse({"status": "failed", "message": "Slot does not exist"}, status=404)
+                        if slot.is_booked:
+                            errors.append(f"Slot already booked for doctor {doctor_id} on {date} at {time}")
+                            continue  # Skip this slot and move to the next one
 
-        except IntegrityError:
-            return JsonResponse({"status": "failed", "message": "Concurrency error. Please try again."}, status=409)
+                        # Mark the slot as booked
+                        slot.is_booked = True
+                        slot.save()
+
+                except DoctorAvailability.DoesNotExist:
+                    errors.append(f"Slot does not exist for doctor {doctor_id} on {date} at {time}")
+                except IntegrityError:
+                    errors.append(f"Concurrency error for doctor {doctor_id} on {date} at {time}. Please try again.")
+                except Exception as e:
+                    errors.append(f"Error booking slot for doctor {doctor_id} on {date} at {time}: {str(e)}")
+
+            if errors:
+                return JsonResponse({"status": "failed", "message": "Some appointments could not be booked.", "errors": errors}, status=400)
+
+            return JsonResponse({
+                "status": "success",
+                "message": "Appointments booked successfully"
+            }, status=201)
+
+        except json.JSONDecodeError:
+            return JsonResponse({"status": "failed", "message": "Invalid JSON format in the request body"}, status=400)
 
         except Exception as e:
             return JsonResponse({"status": "failed", "message": str(e)}, status=500)
 
     return JsonResponse({"status": "failed", "message": "Invalid request method"}, status=405)
-
