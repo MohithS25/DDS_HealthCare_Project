@@ -175,7 +175,7 @@ def get_doctor_availability(request):
             ).first()
 
             if not doctor:
-                return JsonResponse({'status': 'failed', 'message': 'Doctor not found'}, status=404)
+                return JsonResponse({'status': 'failed', 'message': 'Doctor not found'}, status=200)
 
             # Fetch the availability for the doctor starting from the current date
             availability = DoctorAvailability.objects.filter(
@@ -188,7 +188,7 @@ def get_doctor_availability(request):
                 return JsonResponse({
                     'status': 'failed',
                     'message': 'No available time slots found for this doctor'
-                }, status=404)
+                }, status=200)
 
             # Prepare response data
             available_slots = [
